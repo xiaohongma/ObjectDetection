@@ -2,6 +2,9 @@
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/nonfree/nonfree.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
+#include "utils.h"
 
 std::vector<cv::Point> vec_match_locs;
 //determine whether there are point in pts is near in_pt(less than distance)
@@ -112,17 +115,21 @@ void match_homography_img(cv::Mat img,cv::Mat templ){
 
 	//-- Step 3: Matching descriptor vectors using FLANN matcher
 	cv::FlannBasedMatcher matcher;
-	std::vector< cv::DMatch > matches;
-	matcher.match(descriptors_object, descriptors_scene, matches);
+	std::vector<std::vector< cv::DMatch >> matches;
+	matcher.knnMatch(descriptors_object, descriptors_scene, matches,10);
+	//matcher.match(descriptors_object, descriptors_scene, matches);
 
 	double max_dist = 0; double min_dist = 100;
 
 	//-- Quick calculation of max and min distances between keypoints
 	for (int i = 0; i < descriptors_object.rows; i++)
 	{
-		double dist = matches[i].distance;
-		if (dist < min_dist) min_dist = dist;
-		if (dist > max_dist) max_dist = dist;
+		std::vector<cv::DMatch> match_tmp = matches[i];
+		for (int j = 0; j < match_tmp.size(); j++){
+			double dist = match_tmp[j].distance;
+			if (dist < min_dist) min_dist = dist;
+			if (dist > max_dist) max_dist = dist;
+		}
 	}
 
 	printf("-- Max dist : %f \n", max_dist);
@@ -133,9 +140,12 @@ void match_homography_img(cv::Mat img,cv::Mat templ){
 
 	for (int i = 0; i < descriptors_object.rows; i++)
 	{
-		if (matches[i].distance < 3 * min_dist)
-		{
-			good_matches.push_back(matches[i]);
+		std::vector<cv::DMatch> match_tmp = matches[i];
+		for (int j = 0; j < match_tmp.size(); j++){
+			if (match_tmp[j].distance < 3 * min_dist)
+			{
+				good_matches.push_back(match_tmp[j]);
+			}
 		}
 	}
 
@@ -154,6 +164,7 @@ void match_homography_img(cv::Mat img,cv::Mat templ){
 		obj.push_back(keypoints_object[good_matches[i].queryIdx].pt);
 		scene.push_back(keypoints_scene[good_matches[i].trainIdx].pt);
 	}
+
 
 	cv::Mat H = cv::findHomography(obj, scene, CV_RANSAC);
 
@@ -232,18 +243,12 @@ void rotate_img(cv::Mat& org_img,cv::Mat& rotated_img,float angle){
 	cvGetQuadrangleSubPix(des, des_rot, &M);
 	//cvNamedWindow( "dst", 1 );
 
-
-
-
 	cv::Mat mat = cv::cvarrToMat(des_rot);
 	rotated_img = mat;
 	//cv::imshow("rotated img", mat);
 	//cv::waitKey(0);
-
-
-
 }
-int main(){
+void MatchSingleImg(){
 	int match_method = cv::TM_CCOEFF;
 	cv::Mat test_img = cv::imread("Data/image1.png");
 	cv::Mat templ = cv::imread("Data/template.png");
@@ -253,33 +258,55 @@ int main(){
 	cv::Mat rotated_img, img_display;
 	test_img.copyTo(img_display);
 	for (int i = 0; i < 36; i++){
-		
-		rotate_img(templ, rotated_img, i*10);
-		match_img(test_img, rotated_img, mask, img_display, match_method,0.9);
-		
-		
+
+		rotate_img(templ, rotated_img, i * 10);
+		match_img(test_img, rotated_img, mask, img_display, match_method, 0.9);
+
+
 	}
 	imshow("frame", img_display);
 	cv::waitKey(0);
-	//video
+}
+void MatchVideo(){
+	int match_method = cv::TM_CCOEFF;
+	cv::Mat templ = cv::imread("Data/template.png");
 	cv::VideoCapture cap("Data/video1.avi");
 	if (!cap.isOpened() || templ.empty()) {
-		return 0;
+		return;
 	}
 	int n_cnt = 0;
 	bool use_mask = false;
+	cv::Mat img,img_display,mask;
 	while (true){
-		cv::Mat img;
-		bool b_ret= cap.read(img);
+		bool b_ret = cap.read(img);
 		if (!b_ret)
 			break;
 		std::cout << "frame " << n_cnt << std::endl;
-		
+		img.copyTo(img_display);
+	//	match_img(img, templ, mask, img_display, match_method, 0.9);
+		cv::Mat img_bin;
+		/*double thres_low = 0;
+		double thres_high = 0;
+		AdaptiveFindThreshold(img, &thres_low, &thres_high);
+		cv::Mat edges;
+		cv::Canny(img, edges, thres_high, thres_low);*/
+
+		if (img.channels() == 3){
+			cv::cvtColor(img, img, CV_BGR2GRAY);
+		}
+		cv::threshold(img, img_bin, 80, 255, cv::THRESH_BINARY);
+		cv::Mat opened_mask;
+		cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(15, 15));
+		morphologyEx(img_bin, opened_mask, cv::MORPH_OPEN, kernel);
 		match_homography_img(img, templ);
 
 		n_cnt += 1;
 	}
-
+}
+int main(){
+	//MatchSingleImg();
+	MatchVideo();
+	//video
 
 	return 0;
 }
